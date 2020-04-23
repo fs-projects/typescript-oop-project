@@ -1,3 +1,20 @@
+//Drag and Drop interfaces
+interface Draggable {
+  dragStartHandler(event: DragEvent): void;
+  dragEndHandler(event: DragEvent): void;
+}
+
+interface DragTarget {
+  /*handler will handle the case to signal the browser that the thing user is dragging over is a valid drag target. 
+  This will permit or don't permit the drop.*/
+
+  dragOverHandler(event: DragEvent): void;
+  //handler will handle the case of a drop. Like data change on UI.
+  dropHandler(event: DragEvent): void;
+  //handler will handle the case of visual feedback to user when the drop has been made.
+  dragLeaveHandler(event: DragEvent): void;
+}
+
 //Project Type
 enum ProjectStatus {
   Active,
@@ -51,6 +68,18 @@ class ProjectState extends State<Project> {
       ProjectStatus.Active
     );
     this.projects.push(newProject);
+    this.updateListeners();
+  }
+
+  moveProject(projectId: string, newStatus: ProjectStatus) {
+    const project = this.projects.find(prj => prj.id === projectId);
+    if(project && project.status !== newStatus){
+      project.status = newStatus;
+      this.updateListeners();
+    }
+  }
+  
+  updateListeners(){
     for (const listenerFn of this.listeners) {
       listenerFn(this.projects.slice()); //slice returns the copy of the array so original array is not modified
     }
@@ -182,30 +211,59 @@ abstract class Component<T extends HTMLElement, U extends HTMLElement> {
   abstract renderContent(): void;
 }
 
-class ProjectItem extends Component<HTMLUListElement, HTMLLIElement> {
+class ProjectItem extends Component<HTMLUListElement, HTMLLIElement>
+  implements Draggable {
   private project: Project;
+
+  get persons() {
+    if (this.project.people === 1) {
+      return `1 person`;
+    } else {
+      return `${this.project.people} persons`;
+    }
+  }
+
   constructor(hostId: string, project: Project) {
     super("single-project", hostId, false, project.id);
     this.project = project;
     this.configure();
     this.renderContent();
   }
-  configure() {}
+
+  @autobind
+  dragStartHandler(event: DragEvent) {
+    /*it is not neccessary that 'dataTransfer' object will be available for any type of drag event so that
+    is why we have to put ! to let TS know that we will get this object. However for 'dragstart' event we 
+    surely have this object available. 'setData()' method on the 'dataTransfer' object takes in two arguments.
+    One is the type of data that we are trying to transfer and second one is the data itself.*/
+    event.dataTransfer!.setData("text/plain", this.project.id);
+    /*here we are specifying that we are moving the data from one point to another and not copying it from one 
+    point to another*/
+    event.dataTransfer!.effectAllowed = "move";
+  }
+
+  @autobind
+  dragEndHandler(_: DragEvent) {
+  }
+
+  configure() {
+    this.element.addEventListener("dragstart", this.dragStartHandler);
+    this.element.addEventListener("dragend", this.dragEndHandler);
+  }
 
   renderContent() {
     /*this.element here refers to the base class's this.element which is a list element. 
     All the content below is attached to the hostId which is nothing but a 'ul' with id attribute of 
     'active-project-list' or 'finished-project-list'*/
     this.element.querySelector("h2")!.textContent = this.project.title;
-    this.element.querySelector(
-      "h3"
-    )!.textContent = this.project.people.toString();
+    this.element.querySelector("h3")!.textContent = this.persons;
     this.element.querySelector("p")!.textContent = this.project.description;
   }
 }
 
 //ProjectList class
-class ProjectList extends Component<HTMLDivElement, HTMLElement> {
+class ProjectList extends Component<HTMLDivElement, HTMLElement>
+  implements DragTarget {
   assignedProjects: Project[] = [];
 
   constructor(private type: "active" | "finished") {
@@ -215,8 +273,38 @@ class ProjectList extends Component<HTMLDivElement, HTMLElement> {
     only when there is a new project submitted*/
     this.renderContent();
   }
+  @autobind
+  dragOverHandler(event: DragEvent) {
+    if (event.dataTransfer && event.dataTransfer.types[0] === "text/plain") {
+      /*default case of drag/drop event in JS is to not allow any drops so we have to prevent it we do this.
+      Doing this will ensure that our drop event is able to recieve this drop on it.*/
+      event.preventDefault();
+      const listEl = this.element.querySelector("ul")!;
+      listEl.classList.add("droppable");
+    }
+  }
+
+  @autobind
+  dropHandler(event: DragEvent) {
+    const prjId = event.dataTransfer!.getData("text/plain");
+    projectState.moveProject(
+      prjId,
+      this.type === "active" ? ProjectStatus.Active : ProjectStatus.Finished
+    );
+  }
+
+  @autobind
+  dragLeaveHandler(_: DragEvent) {
+    const listEl = this.element.querySelector("ul")!;
+    listEl.classList.remove("droppable");
+  }
+
   //It is a convention to add public method first and then private methods-
   configure() {
+    this.element.addEventListener("dragover", this.dragOverHandler);
+    this.element.addEventListener("drop", this.dropHandler);
+    this.element.addEventListener("dragleave", this.dragLeaveHandler);
+
     projectState.addListener((projects: Project[]) => {
       const relevantProjects = projects.filter(prj => {
         if (this.type === "active") {
